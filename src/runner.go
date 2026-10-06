@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -33,9 +34,9 @@ func check(conf *config) Triool {
 		var err error
 
 		switch strings.ToUpper(conf.RecordType) {
-		case "A", "AAAA":
-			ret, err = resolver.LookupAddr(ctx, conf.Record)
-		case "TXT":
+		case "TXT", "A", "AAAA":
+			// Operator directive: A/AAAA resolve as TXT — LookupAddr (reverse PTR)
+			// was wrong for these and is gone.
 			ret, err = resolver.LookupTXT(ctx, conf.Record)
 		default:
 			err = errors.New("unsupported record type")
@@ -125,43 +126,68 @@ func delFileIterative(path string) {
 }
 
 // Countdown state machine, the wipe decision. Called once per poll with the
-// pre-check snapshot `now` and the previous iteration's `lastTick`.
-//   - False: expected value seen, cancel the countdown.
-//   - True:  record visible but value missing — arm one full countdown; when it
-//     has expired, fire (and re-arm while still missing, so a persistent
-//     missing value fires at most once per period).
-//   - Uncertain: lookup failed everywhere — never arms; an armed countdown is
-//     frozen by exactly the elapsed poll period (an outage never wipes).
+// pre-check snapshot `now`.
+//   - False: expected value seen — cancel, no matter what (even past expiry).
+//   - True:  record visible but value missing — arm one full countdown; fire
+//     when expired, and re-arm while still missing (fires at most once per
+//     period).
+//   - Uncertain: lookup failed everywhere — never arms; an armed deadline keeps
+//     running on the wall clock, and expiry still fires (a lookup outage
+//     cannot defer the wipe).
 //
 // deadline == zero time means disarmed.
-func advance(deadline time.Time, ret Triool, conf *config, now, lastTick time.Time) (time.Time, bool) {
+func advance(deadline time.Time, ret Triool, conf *config, now time.Time) (time.Time, bool) {
 	countdown := time.Duration(conf.Countdown) * time.Second
-	switch ret {
-	case True:
-		if deadline.IsZero() {
-			log.Printf("Expected value missing; wipe countdown armed until %s", now.Add(countdown).Format(time.RFC3339))
-			return now.Add(countdown), false
-		}
-		if !now.Before(deadline) {
-			log.Println("Countdown expired, executing...")
-			return now.Add(countdown), true
-		}
-		log.Printf("Countdown running, %s until wipe", deadline.Sub(now))
-		return deadline, false
-	case False:
+	if ret == False {
 		if !deadline.IsZero() {
 			log.Println("Expected value seen; countdown reset")
 			return time.Time{}, false
 		}
 		return deadline, false
-	default: // Uncertain
+	}
+	if !deadline.IsZero() && !now.Before(deadline) {
+		log.Println("Countdown expired, executing...")
+		return now.Add(countdown), true
+	}
+	if ret == True {
 		if deadline.IsZero() {
-			log.Println("Record lookup failed; no countdown running")
-			return deadline, false
+			log.Printf("Expected value missing; wipe countdown armed until %s", now.Add(countdown).Format(time.RFC3339))
+			return now.Add(countdown), false
 		}
-		deadline = deadline.Add(now.Sub(lastTick))
-		log.Printf("Record lookup failed; countdown frozen until %s", deadline.Format(time.RFC3339))
+		log.Printf("Countdown running, %s until wipe", deadline.Sub(now))
 		return deadline, false
+	}
+	// Uncertain, disarmed: nothing to do.
+	log.Println("Record lookup failed; no countdown running")
+	return deadline, false
+}
+
+// Persisted deadline so a crash/restart/reboot does not disarm the wipe.
+// Unix seconds in a small file next to the lock; guarded by the same global
+// lock the running process holds.
+var deadlineFile = filepath.Join(os.TempDir(), "dmswitch.countdown")
+
+func loadDeadline() time.Time {
+	data, err := os.ReadFile(deadlineFile)
+	if err != nil {
+		return time.Time{} // no file = disarmed
+	}
+	secs, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil || secs <= 0 {
+		return time.Time{} // garbage = disarmed
+	}
+	return time.Unix(secs, 0)
+}
+
+func saveDeadline(t time.Time) {
+	var err error
+	if t.IsZero() {
+		err = os.Remove(deadlineFile)
+	} else {
+		err = os.WriteFile(deadlineFile, []byte(strconv.FormatInt(t.Unix(), 10)), 0600)
+	}
+	if err != nil {
+		log.Printf("Could not persist countdown: %s", err)
 	}
 }
 

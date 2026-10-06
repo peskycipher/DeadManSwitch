@@ -43,18 +43,21 @@ func main() {
 	signal.Notify(signalChan, os.Interrupt)
 	var checkTimer *time.Timer
 	var deadline time.Time // wipe countdown; zero = disarmed
-	var lastTick time.Time
+	deadline = loadDeadline()
 	for {
 		log.Println("Start routine check...")
 		now := time.Now()
 		ret := check(conf)
 
 		var fire bool
-		deadline, fire = advance(deadline, ret, conf, now, lastTick)
+		nDeadline := deadline
+		deadline, fire = advance(deadline, ret, conf, now)
+		if !deadline.Equal(nDeadline) {
+			saveDeadline(deadline)
+		}
 		if fire {
 			execute(conf)
 		}
-		lastTick = now
 
 		checkTimer = time.NewTimer(time.Duration(conf.CheckInterval) * time.Second)
 		log.Println("Idle...")
