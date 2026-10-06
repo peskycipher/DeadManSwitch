@@ -1,4 +1,4 @@
-module main.go
+module dmswitch
 
 go 1.22.2
 
