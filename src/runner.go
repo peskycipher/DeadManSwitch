@@ -44,22 +44,29 @@ func check(conf *config) Triool {
 			log.Printf("Unable to resolve record: %s\n", err)
 		} else {
 			log.Println("Result entries:")
-			for _, elem := range ret {
-				log.Println(elem)
-				if strings.Contains(elem, conf.ExpectedValue) {
-					log.Println("Normal value matched")
-					checkResult = False
-				}
-				if strings.Contains(elem, conf.TriggerValue) {
-					// Something happened
-					log.Println("Trigger value matched")
-					checkResult = True
-					break
-				}
-			}
+			checkResult = evaluateRecords(ret, conf)
 		}
 	}
 	return checkResult
+}
+
+// Decide and log the result of one resolver's record entries.
+// Trigger wins over expected; expected wins over no match at all.
+func evaluateRecords(records []string, conf *config) Triool {
+	result := Uncertain
+	for _, elem := range records {
+		log.Println(elem)
+		if strings.Contains(elem, conf.ExpectedValue) {
+			log.Println("Normal value matched")
+			result = False
+		}
+		if strings.Contains(elem, conf.TriggerValue) {
+			// Something happened
+			log.Println("Trigger value matched")
+			return True
+		}
+	}
+	return result
 }
 
 func runScriptIterative(path string) {
