@@ -15,6 +15,7 @@ type config struct {
 	ExecuteScripts    []string `toml:"execute_scripts"`
 	Countdown         uint     `toml:"countdown"`
 	CheckInterval     uint     `toml:"check_interval"`
+	DryRun            bool     `toml:"dry_run"`
 	ExitAfterTrigger  bool     `toml:"exit_after_trigger"`
 }
 

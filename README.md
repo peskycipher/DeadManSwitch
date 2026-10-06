@@ -32,6 +32,7 @@ The config file is self-explanatory:
 | `try_system_resolver`, `custom_resolvers` | resolvers to try in order; first decisive answer wins |
 | `countdown` | seconds between "value missing" and the switch firing; default 3600 |
 | `check_interval` | seconds between polls; default 60 |
+| `dry_run` | simulate firings: log what would run/be deleted, touch nothing |
 | `delete_files`, `execute_scripts` | what runs/gets removed on firing |
 | `exit_after_trigger` | exit after the first firing instead of continuing |
 
@@ -48,6 +49,7 @@ Caveats:
 * Programs will be executed in alphabet order.
 * File deletion happens after program execution.
 * If you keep `exit_after_trigger = false`, the switch re-fires once per countdown period while the value stays missing — make your hooks idempotent.
+* Set `dry_run = true` to rehearse: the full countdown state machine runs (including persistence), but firing only logs what would happen. Dry runs never exit, even with `exit_after_trigger = true`.
 
 ## Usage
 

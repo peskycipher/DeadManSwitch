@@ -192,6 +192,21 @@ func saveDeadline(t time.Time) {
 }
 
 func execute(conf *config) {
+	if conf.DryRun {
+		log.Println("Dry run: switch fired; destructive actions simulated")
+		for _, entry := range conf.ExecuteScripts {
+			log.Printf("dry run: would execute: %s", entry)
+		}
+		for _, entry := range conf.DeleteFiles {
+			log.Printf("dry run: would delete: %s", entry)
+		}
+		if conf.ExitAfterTrigger {
+			log.Println("Dry run complete, would exit (exit_after_trigger=true)")
+			return
+		}
+		return
+	}
+
 	log.Println("Executing hooks...")
 
 	// execute hooks

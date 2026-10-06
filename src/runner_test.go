@@ -227,3 +227,59 @@ func TestDeadlinePersistence(t *testing.T) {
 		t.Error("garbage file must load as disarmed")
 	}
 }
+
+// Characterization: dry_run=true simulates the firing — the state machine runs,
+// but scripts are not executed and files are not deleted.
+func TestExecuteDryRun(t *testing.T) {
+	base := t.TempDir()
+	marker := filepath.Join(base, "marker")
+	script := filepath.Join(base, "hook.sh")
+	//nolint:gosec // test fixture
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(base, "victim")
+	if err := os.WriteFile(victim, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	execute(&config{
+		DryRun:         true,
+		ExecuteScripts: []string{script},
+		DeleteFiles:    []string{victim},
+	})
+
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("dry run must not execute scripts, but marker was created")
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Error("dry run must not delete files, but victim is gone")
+	}
+}
+
+// Contrast: without dry_run, execute() really runs hooks and really deletes.
+func TestExecuteRealRun(t *testing.T) {
+	base := t.TempDir()
+	marker := filepath.Join(base, "marker")
+	script := filepath.Join(base, "hook.sh")
+	//nolint:gosec // test fixture
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(base, "victim")
+	if err := os.WriteFile(victim, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	execute(&config{
+		ExecuteScripts: []string{script},
+		DeleteFiles:    []string{victim},
+	})
+
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("real run should have executed the script: %v", err)
+	}
+	if _, err := os.Stat(victim); !os.IsNotExist(err) {
+		t.Errorf("real run should have deleted the victim: %v", err)
+	}
+}

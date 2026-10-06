@@ -27,6 +27,7 @@ delete_files = ["/tmp/a"]
 execute_scripts = ["/tmp/hook.sh"]
 countdown = 600
 check_interval = 90
+dry_run = false
 exit_after_trigger = true
 `)
 	conf, err := loadConfig(path)
@@ -47,6 +48,9 @@ exit_after_trigger = true
 	}
 	if conf.Countdown != 600 || conf.CheckInterval != 90 {
 		t.Errorf("numeric fields wrong: %+v", conf)
+	}
+	if conf.DryRun {
+		t.Errorf("dry_run = true, want default false: %+v", conf)
 	}
 }
 
