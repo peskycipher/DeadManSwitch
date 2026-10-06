@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 func check(conf *config) Triool {
@@ -50,23 +51,19 @@ func check(conf *config) Triool {
 	return checkResult
 }
 
-// Decide and log the result of one resolver's record entries.
-// Trigger wins over expected; expected wins over no match at all.
+// Decide the result of one resolver's record entries.
+// Expected value found → False (alive). Record visible but value missing → True
+// (starts/resumes the wipe countdown). Lookup errors never reach here.
 func evaluateRecords(records []string, conf *config) Triool {
-	result := Uncertain
 	for _, elem := range records {
 		log.Println(elem)
 		if strings.Contains(elem, conf.ExpectedValue) {
 			log.Println("Normal value matched")
-			result = False
-		}
-		if strings.Contains(elem, conf.TriggerValue) {
-			// Something happened
-			log.Println("Trigger value matched")
-			return True
+			return False
 		}
 	}
-	return result
+	log.Println("Expected value not found")
+	return True
 }
 
 func runScriptIterative(path string) {
@@ -124,6 +121,47 @@ func delFileIterative(path string) {
 				log.Print(err)
 			}
 		}
+	}
+}
+
+// Countdown state machine, the wipe decision. Called once per poll with the
+// pre-check snapshot `now` and the previous iteration's `lastTick`.
+//   - False: expected value seen, cancel the countdown.
+//   - True:  record visible but value missing — arm one full countdown; when it
+//     has expired, fire (and re-arm while still missing, so a persistent
+//     missing value fires at most once per period).
+//   - Uncertain: lookup failed everywhere — never arms; an armed countdown is
+//     frozen by exactly the elapsed poll period (an outage never wipes).
+//
+// deadline == zero time means disarmed.
+func advance(deadline time.Time, ret Triool, conf *config, now, lastTick time.Time) (time.Time, bool) {
+	countdown := time.Duration(conf.Countdown) * time.Second
+	switch ret {
+	case True:
+		if deadline.IsZero() {
+			log.Printf("Expected value missing; wipe countdown armed until %s", now.Add(countdown).Format(time.RFC3339))
+			return now.Add(countdown), false
+		}
+		if !now.Before(deadline) {
+			log.Println("Countdown expired, executing...")
+			return now.Add(countdown), true
+		}
+		log.Printf("Countdown running, %s until wipe", deadline.Sub(now))
+		return deadline, false
+	case False:
+		if !deadline.IsZero() {
+			log.Println("Expected value seen; countdown reset")
+			return time.Time{}, false
+		}
+		return deadline, false
+	default: // Uncertain
+		if deadline.IsZero() {
+			log.Println("Record lookup failed; no countdown running")
+			return deadline, false
+		}
+		deadline = deadline.Add(now.Sub(lastTick))
+		log.Printf("Record lookup failed; countdown frozen until %s", deadline.Format(time.RFC3339))
+		return deadline, false
 	}
 }
 

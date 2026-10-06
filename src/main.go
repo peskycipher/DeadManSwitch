@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"time"
 )
 
@@ -29,10 +28,7 @@ func main() {
 
 	log.Printf("Dead Man's Switch starting...")
 
-	filename := "/var/run/dmswitch.lock"
-	if runtime.GOOS == "windows" {
-		filename = filepath.Join(os.TempDir(), "dmswitch.lock")
-	}
+	filename := filepath.Join(os.TempDir(), "dmswitch.lock")
 
 	globalMutex, err := filemutex.New(filename)
 	if err != nil {
@@ -46,30 +42,26 @@ func main() {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt)
 	var checkTimer *time.Timer
-	var uncertainCount uint = 0
+	var deadline time.Time // wipe countdown; zero = disarmed
+	var lastTick time.Time
 	for {
 		log.Println("Start routine check...")
+		now := time.Now()
 		ret := check(conf)
 
-		switch ret {
-		case True:
+		var fire bool
+		deadline, fire = advance(deadline, ret, conf, now, lastTick)
+		if fire {
 			execute(conf)
-		case False:
-			uncertainCount = 0
-		case Uncertain:
-			uncertainCount++
-			log.Printf("Uncertain count %d/%d", uncertainCount, conf.MaxUncertainTolerance)
-			if conf.TriggerOnUncertain && uncertainCount > conf.MaxUncertainTolerance {
-				execute(conf)
-			}
 		}
+		lastTick = now
 
 		checkTimer = time.NewTimer(time.Duration(conf.CheckInterval) * time.Second)
 		log.Println("Idle...")
 		select {
-		case <- checkTimer.C:
+		case <-checkTimer.C:
 			continue
-		case <- signalChan:
+		case <-signalChan:
 			log.Println("SIGINT received, quitting...")
 			os.Exit(0)
 		}
